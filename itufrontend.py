@@ -4,20 +4,87 @@ Frontend for ITU project - file manager
 """
 
 import PyQt5
+from PyQt5 import QtWidgets
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QDesktopWidget,
                              QSplitter, QFrame, QHBoxLayout, QPushButton,
                              QTextEdit, QWidget, QVBoxLayout, QSizePolicy,
-                             QLineEdit, QLabel, QFontDialog)
+                             QLineEdit, QLabel, QFontDialog, QTableWidget,
+                             QTableWidgetItem, QComboBox)
 from PyQt5.QtCore import Qt
+from PyQt5 import QtGui
 import sys
 
 
+class FileExplorerWidget(QSplitter):
+
+    CMD_IN_MAX_HEIGHT = 25
+    CMD_OUT_MAX_HEIGHT = 2 * CMD_IN_MAX_HEIGHT
+    CMD_IN_PLACEHOLDER = ""
+    FILES_WINDOW_COLUMNS = 3
+    FILES_WINDOW_TOP_FRAME_HEIGHT = 30
+
+    def __init__(self, language):
+        super(FileExplorerWidget, self).__init__(Qt.Vertical)
+        #self.hlayout = QHBoxLayout(self)
+        #self.setLayout(self.hlayout)
+        self.language = language
+        self.reinit()
+
+    def reinit(self):
+        # Making the left selection window
+        # Frame for disk selection and search
+        self.topf = QFrame(self)
+
+        # Set layout
+        self.topf_layout = QHBoxLayout(self.topf)
+        self.topf.setLayout(self.topf_layout)
+
+        self.topf_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.topf.setMaximumHeight(FileExplorerWidget.FILES_WINDOW_TOP_FRAME_HEIGHT)
+        self.topf.setMinimumHeight(FileExplorerWidget.FILES_WINDOW_TOP_FRAME_HEIGHT)
+        # Disk selection
+        self.disks = QComboBox(self.topf)
+
+        # Search field
+        self.search = QLineEdit(self.topf)
+
+        self.topf_layout.addWidget(self.disks)
+        self.topf_layout.addWidget(self.search)
+
+        self.files = QTableWidget(self)
+
+        # Adding table to left window
+        self.files.setRowCount(0)
+        self.files.setColumnCount(FileExplorerWidget.FILES_WINDOW_COLUMNS)
+        self.files.setHorizontalHeaderLabels(MainWindow.NAMES[self.language]["files_header"])
+        self.files.verticalHeader().setVisible(False)
+        header = self.files.horizontalHeader()
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+
+        # Left window terminal
+        self.cmd_in = QLineEdit(self.files)
+        self.cmd_in.setMaximumHeight(FileExplorerWidget.CMD_IN_MAX_HEIGHT)
+        self.cmd_in.setPlaceholderText(FileExplorerWidget.CMD_IN_PLACEHOLDER)
+        self.cmd_out = QTextEdit(self.files)
+        self.cmd_out.setMaximumHeight(FileExplorerWidget.CMD_OUT_MAX_HEIGHT)
+        self.cmd_out.setReadOnly(True)
+
+        # Combo box for disk selection
+        self.addWidget(self.topf)
+        self.addWidget(self.files)
+        self.addWidget(self.cmd_out)
+        self.addWidget(self.cmd_in)
+
+
 # TODO: Use QFontDialog to get user to select the font
+# TODO: Button to add or remove explorer?
 class MainWindow(QMainWindow):
 
     NAMES = {
         "cz": {
             "title": "ITU Prohlížeč souborů",
+            "files_header": ["Název", "Velikost", "Datum úpravy"]
         },
         "en": {
             "title": "ITU File explorer"
@@ -25,9 +92,7 @@ class MainWindow(QMainWindow):
     }
 
     TOP_WINDOW_MAX_HEIGHT = 90
-    CMD_IN_MAX_HEIGHT = 25
-    CMD_OUT_MAX_HEIGHT = 2*CMD_IN_MAX_HEIGHT
-    CMD_IN_PLACEHOLDER = ""
+    EXPLORER_AMOUNT = 2
 
     def __init__(self, width, height, language="cz"):
         super(MainWindow, self).__init__()
@@ -39,54 +104,18 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(MainWindow.NAMES[self.language]["title"])
         self.center()
 
-        # Making the left selection window
-        self.left_window = QFrame(self)
-        self.left_window.setFrameShape(QFrame.StyledPanel)
-
-        # Left window terminal
-        self.left_window_cmd_in = QLineEdit(self)
-        self.left_window_cmd_in.setMaximumHeight(MainWindow.CMD_IN_MAX_HEIGHT)
-        self.left_window_cmd_in.setPlaceholderText(MainWindow.CMD_IN_PLACEHOLDER)
-        self.left_window_cmd_out = QTextEdit(self)
-        self.left_window_cmd_out.setMaximumHeight(MainWindow.CMD_OUT_MAX_HEIGHT)
-        self.left_window_cmd_out.setReadOnly(True)
-
-        self.left_window_splitter = QSplitter(Qt.Vertical)
-        self.left_window_splitter.addWidget(self.left_window)
-        self.left_window_splitter.addWidget(self.left_window_cmd_out)
-        self.left_window_splitter.addWidget(self.left_window_cmd_in)
-
-        # Making the right selection window
-        self.right_window = QFrame(self)
-        self.right_window.setFrameShape(QFrame.StyledPanel)
-
-        # Left window terminal
-        self.right_window_cmd_in = QLineEdit(self)
-        self.right_window_cmd_in.setMaximumHeight(MainWindow.CMD_IN_MAX_HEIGHT)
-        self.right_window_cmd_in.setPlaceholderText(MainWindow.CMD_IN_PLACEHOLDER)
-        self.right_window_cmd_out = QTextEdit(self)
-        self.right_window_cmd_out.setMaximumHeight(MainWindow.CMD_OUT_MAX_HEIGHT)
-        """
-        sizePolicy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        sizePolicy.setHorizontalStretch(0)
-        sizePolicy.setVerticalStretch(self.right_window_cmd_out.height() / 4 * 3)
-        self.right_window_cmd_out.setSizePolicy(sizePolicy)
-        """
-        self.right_window_cmd_out.setReadOnly(True)
-
-        self.right_window_splitter = QSplitter(Qt.Vertical)
-        self.right_window_splitter.addWidget(self.right_window)
-        self.right_window_splitter.addWidget(self.right_window_cmd_out)
-        self.right_window_splitter.addWidget(self.right_window_cmd_in)
-
         # Making the space above left and right window
         self.top_frame = QFrame(self)
         self.top_frame.setMaximumHeight(MainWindow.TOP_WINDOW_MAX_HEIGHT)
 
+        # Creating explorer windows
+        self.explorers = [FileExplorerWidget(self.language) for _ in range(MainWindow.EXPLORER_AMOUNT)]
+
         # Adding a splitter
         self.splitter = QSplitter(Qt.Horizontal)
-        self.splitter.addWidget(self.left_window_splitter)
-        self.splitter.addWidget(self.right_window_splitter)
+
+        for i in self.explorers:
+            self.splitter.addWidget(i)
 
         self.main_widget = QWidget(self)
         self.setCentralWidget(self.main_widget)
