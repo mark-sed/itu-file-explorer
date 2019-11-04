@@ -12,6 +12,8 @@ import shlex
 import shutil
 import psutil
 from datetime import datetime
+from socket import gethostname
+import getpass
 
 __author__ = ["Marek Sedláček (xsedla1b)", "Klára Ungrová (xungro00)", "Ronald Telmanik (xtelma00)"]
 __email__ = ["xsedla1b@fit.vutbr.cz", "xungro00@fit.vutbr.cz", "xtelma00@fit.vutbr.cz"]
@@ -321,6 +323,7 @@ class FileManager:
 
     def __init__(self, root_dir="/"):
         self._root = Folder(root_dir)
+        self.active = Folder(root_dir)
 
     def get_disks(self):
         return [Disk(d) for d in psutil.disk_partitions()]
@@ -330,6 +333,9 @@ class FileManager:
 
     def get_root(self):
         return self._root
+
+    def get_prefix(self):
+        return getpass.getuser() + "@" + gethostname() + ":" + "/" + self.active.get_name() + "$"
 
 
 if __name__ == "__main__":
