@@ -5,6 +5,7 @@ Backend for ITU project - file manager
 
 import os
 from os.path import join
+import subprocess
 import ntpath
 from pathlib import Path
 import sys
@@ -336,6 +337,22 @@ class FileManager:
 
     def get_prefix(self):
         return getpass.getuser() + "@" + gethostname() + ":" + "/" + self.active.get_name() + "$"
+
+
+def make_shell_command(command):
+    """
+    Runs a command in a subshell and returns output
+    :param command: Shell command
+    :return: tuple of stdout and stderr (stdout, stderr)
+             If stderr is "ERROR::ITU-BACKEND: Could not run subprocess" then the subprocess could raised an exception
+    """
+    try:
+        o = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stdin=subprocess.PIPE,
+                             stderr=subprocess.PIPE, env={**os.environ})
+        out, err = o.communicate()
+        return out.decode('utf-8') if out is not None else None, err.decode('utf-8') if err is not None else None
+    except Exception:
+        return None, "ERROR::ITU-BACKEND: Could not run subprocess"
 
 
 if __name__ == "__main__":
