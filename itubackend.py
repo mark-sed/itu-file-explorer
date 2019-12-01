@@ -322,9 +322,12 @@ class Disk:
 
 class FileManager:
 
-    def __init__(self, root_dir="/"):
+    def __init__(self, root_dir="/home/marek/Desktop/skola/ITU/test_folder"): # TODO: Change
         self._root = Folder(root_dir)
         self.active = Folder(root_dir)
+
+    def set_active(self, dir):
+        self.active = dir
 
     def get_disks(self):
         return [Disk(d) for d in psutil.disk_partitions()]
@@ -339,16 +342,17 @@ class FileManager:
         return getpass.getuser() + "@" + gethostname() + ":" + "/" + self.active.get_name() + "$"
 
 
-def make_shell_command(command):
+def make_shell_command(command, directory):
     """
     Runs a command in a subshell and returns output
     :param command: Shell command
+    :param directory: Tells in which directory should the command be executed
     :return: tuple of stdout and stderr (stdout, stderr)
              If stderr is "ERROR::ITU-BACKEND: Could not run subprocess" then the subprocess could raised an exception
     """
     try:
         o = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stdin=subprocess.PIPE,
-                             stderr=subprocess.PIPE, env={**os.environ})
+                             stderr=subprocess.PIPE, env={**os.environ}, cwd=directory)
         out, err = o.communicate()
         return out.decode('utf-8') if out is not None else None, err.decode('utf-8') if err is not None else None
     except Exception:
@@ -357,7 +361,7 @@ def make_shell_command(command):
 
 if __name__ == "__main__":
     fm = FileManager()
-    fm.set_root("/home/marek/Desktop/skola/ITU/test_folder")
+    fm.set_root("/")
     fldr = fm.get_root()
 
     print("Disks:")
