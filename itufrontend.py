@@ -261,7 +261,6 @@ class FileExplorerWidget(QSplitter):
         self.displayed = self.filter_displayed(self.displayed)
         if self.sort_by == FileExplorerWidget.SORT_NAME:
             self.displayed.sort(key=lambda x: x.get_name().lower(), reverse=self.sort_desc)
-            print([i.get_name() for i in self.displayed])
         elif self.sort_by == FileExplorerWidget.SORT_SIZE:
             self.displayed.sort(key=lambda x: x.get_size() if x.is_file() else -1, reverse=self.sort_desc)
         else:
@@ -353,7 +352,7 @@ class MainWindow(QMainWindow):
             "mb_advanced": "Pokročilé nastavení",
             "e_file_exists": "Soubor s tímto jménem již existuje",
             "e_folder_exists": "Složka s tímto jménem již existuje",
-            "e_action_filter": "Nesprávný syntax action filteru",
+            "e_action_filter": "Nesprávný syntax podmíněného vykonání",
             "e_action_filter_det": "Povolené operátory jsou == a != a musí být odděleny mezerami",
             "e_other": "Při operaci nastala chyba",
             "error": "Chyba",
@@ -365,12 +364,112 @@ class MainWindow(QMainWindow):
         "en": {
             "language_name": "English",
             "title": "ITU File explorer",
-
+            "files_header": ["Name", "Size", "Last modification"],
+            "search": "Search in",
+            "new_folder": "New folder",
+            "new_file": "New file",
+            "action_filter": "Action filter (eg. sh test $! == OK)",
+            "b_mkdir_mo": "Create new folder",
+            "b_mkdir_d": "Folder name",
+            "b_touch_mo": "Create empty file",
+            "b_touch_d": "File name",
+            "b_delete_mo": "Delete",
+            "b_rename_mo": "Rename",
+            "b_rename_d": "New name for ",
+            "b_move_right_mo": "Move to the folder on the right",
+            "b_move_left_mo": "Move to the folder on the left",
+            "b_copy_right_mo": "Copy to the folder on the right",
+            "b_copy_left_mo": "Copy to the folder on the left",
+            "b_copy_title": "Copy",
+            "b_delete_file_confirm": "Do you really want to delete file: ",
+            "b_delete_folder_confirm": "Do you really want to delete folder and all it's contents: ",
+            "b_delete_multiple_confirm": "Do you really want to delete all these items: ",
+            "mb_settings": "Settings",
+            "mb_set_windows": "Working windows",
+            "mb_set_windows_add": "Add window",
+            "mb_set_windows_remove": "Remove window",
+            "as_windows_amount": "Amount of windows",
+            "mb_exit": "Quit",
+            "mb_language": "Language",
+            "as_theme": "Theme",
+            "as_theme_light": "Light",
+            "as_theme_dark": "Dark",
+            "as_style": "Style",
+            "as_appearance": "Appearance",
+            "as_font": "Font",
+            "as_apply": "Apply",
+            "as_ok": "OK",
+            "as_cancel": "Cancel",
+            "as_icon_size": "Button size",
+            "as_normal": "Normal",
+            "as_bigger": "Bigger",
+            "as_default_path": "Default path",
+            "mb_advanced": "Advanced settings",
+            "e_file_exists": "File with this name already exists",
+            "e_folder_exists": "Folder with this name already exists",
+            "e_action_filter": "Incorrect syntax of action filter",
+            "e_action_filter_det": "Allowed operators are == and != and they have to be separated by spaces",
+            "e_other": "An error arised during an operation",
+            "error": "Error",
+            "close": "Close",
+            "yes": "Yes",
+            "no": "No",
+            "warning": "Warning",
         },
         "fr": {
             "language_name": "Français",
             "title": "Explorateur de Fichiers",
-
+            "files_header": ["Nom", "Taille", "Dernière modification"],
+            "search": "Search in",
+            "new_folder": "Nouveau dossier",
+            "new_file": "Nouveau fichier",
+            "action_filter": "Filtre d'action (p. ex. sh test $! == OK)",
+            "b_mkdir_mo": "Créer nouveau dossier",
+            "b_mkdir_d": "Nom de dossier",
+            "b_touch_mo": "Créer un fichier vide",
+            "b_touch_d": "Nom de fichier",
+            "b_delete_mo": "Supprimer",
+            "b_rename_mo": "Renommer",
+            "b_rename_d": "Nouveau nom pour ",
+            "b_move_right_mo": "Déplacer vers dossier de droite",
+            "b_move_left_mo": "Déplacer vers dossier de gauche",
+            "b_copy_right_mo": "Copier vers dossier de droite",
+            "b_copy_left_mo": "Copier vers dossier de gauche",
+            "b_copy_title": "Copier",
+            "b_delete_file_confirm": "Voulez-vous vraiment supprimer le fichier : ",
+            "b_delete_folder_confirm": "Voulez-vous vraiment supprimer le dossier : ",
+            "b_delete_multiple_confirm": "Voulez-vous vraiment supprimer le dossier et tout le contenu : ",
+            "mb_settings": "Paramètres",
+            "mb_set_windows": "Fenêtres de travail",
+            "mb_set_windows_add": "Ajouter une fenêtre",
+            "mb_set_windows_remove": "Supprimer une fenêtre",
+            "as_windows_amount": "Nombre de fenêtres",
+            "mb_exit": "Quitter",
+            "mb_language": "Langue",
+            "as_theme": "Thème",
+            "as_theme_light": "Clair",
+            "as_theme_dark": "Noir",
+            "as_style": "Style",
+            "as_appearance": "Apparence",
+            "as_font": "Police",
+            "as_apply": "Appliquer",
+            "as_ok": "Confirmer",
+            "as_cancel": "Annuler",
+            "as_icon_size": "Taille des boutons",
+            "as_normal": "Normal",
+            "as_bigger": "Gros",
+            "as_default_path": "Chemin par défaut",
+            "mb_advanced": "Réglages avancés",
+            "e_file_exists": "Le fichier avec ce nom existe déjà",
+            "e_folder_exists": "Le dossier avec ce nom existe déjà",
+            "e_action_filter": "Syntaxe incorrecte de filtre d'action",
+            "e_action_filter_det": "Les opérateurs autorisés sont == et != avec des espaces",
+            "e_other": "Une erreur est survenue lors d'une opération",
+            "error": "Erreur",
+            "close": "Fermer",
+            "yes": "Oui",
+            "no": "Non",
+            "warning": "Attention",
         }
     }
 
@@ -879,10 +978,12 @@ class SettingsWindow(QMainWindow):
     def __init__(self, parent=None):
         super(SettingsWindow, self).__init__(parent)
         self.parent = parent
+        # Remove maximize and minimize button
+        self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowMaximizeButtonHint)
+        self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowMinimizeButtonHint)
         # Center the screen
         self.setMinimumWidth(SettingsWindow.MIN_WIDTH)
         self.setMaximumWidth(SettingsWindow.MAX_WIDTH)
-        self.initUI()
         self.old_explorers = MainWindow.EXPLORER_AMOUNT
         screen = QApplication.desktop().screenNumber(QApplication.desktop().cursor().pos())
         center = QApplication.desktop().screenGeometry(screen).center()
@@ -979,6 +1080,7 @@ class SettingsWindow(QMainWindow):
         self.layout.addWidget(self.button_box, alignment=QtCore.Qt.AlignRight)
 
     def update(self):
+        self.initUI()
         self.theme = self.parent.theme
         self.old_font = self.font()
         self.old_style = app.style().objectName()
