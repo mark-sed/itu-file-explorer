@@ -270,8 +270,27 @@ class File(Item):
         self._path = new_dest.get_path()
         self._name = new_dest.get_name()
 
-    def get_size(self, metric="B"):
-        return os.path.getsize(self.get_path()) / get_divisor(metric)
+    def get_size(self, metric="B", metric_auto=False):
+        """
+        :param metric: Metric
+        :param metric_auto: Automaticky finds the best metric
+        :return: size or (size, "metric") if metric_auto is true
+        """
+        s = os.path.getsize(self.get_path())
+        if metric_auto:
+            if s < 1000:
+                metric = "B"
+            elif s < 1000000:
+                metric = "KB"
+            elif s < 1000000000:
+                metric = "MB"
+            elif s < 1000000000000:
+                metric = "GB"
+            else:
+                metric = "TB"
+            return s / get_divisor(metric), metric
+        else:
+            return s / get_divisor(metric)
 
     def get_modification_time(self):
         return os.path.getmtime(self.get_path())
@@ -322,9 +341,10 @@ class Disk:
 
 class FileManager:
 
-    def __init__(self, root_dir="/home/marek/Desktop/skola/ITU/test_folder"): # TODO: Change
+    def __init__(self, root_dir="/"):
         self._root = Folder(root_dir)
         self.active = Folder(root_dir)
+        self.disk = self.get_disks()[0]
 
     def set_active(self, dir):
         self.active = dir
@@ -358,6 +378,48 @@ def make_shell_command(command, directory):
     except Exception:
         return None, "ERROR::ITU-BACKEND: Could not run subprocess"
 
+
+def check_action_filter(a_filter, directory, file=""):
+    """
+    Executes command in a subshell and checks it's output with passed in successful one
+    if the outputs match True is returned
+    :param a_filter: Action filter
+    :param file: Value which will be put instead of $! in command
+    :param directory: Directory in which should be command executed
+    :return: True if command had the same output as success_out
+    :raise: IncorrectActionFilterException if action filter has incorrect syntax
+    """
+    # Get operator
+    splitted = a_filter.split(" == ", 1)
+    if len(splitted) == 2:
+        command = splitted[0]
+        success_out = splitted[1]
+        comp = (lambda a, b: a == b)
+    else:
+        splitted = a_filter.split(" != ", 1)
+        if len(splitted) == 2:
+            command = splitted[0]
+            success_out = splitted[1]
+            comp = (lambda a, b: a != b)
+        else:
+            raise IncorrectActionFilterException("No comparison sign found")
+
+    # Replace $! with file name
+    command = command.replace("$!", file)
+    success_out = success_out.replace("$!", file)
+
+    try:
+        o = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stdin=subprocess.PIPE,
+                             stderr=subprocess.PIPE, env={**os.environ}, cwd=directory)
+        out, err = o.communicate()
+        out_txt = out.decode('utf-8').rstrip()
+        return comp(out_txt, success_out)
+    except Exception:
+        return False
+
+
+class IncorrectActionFilterException(Exception):
+    ...
 
 if __name__ == "__main__":
     fm = FileManager()

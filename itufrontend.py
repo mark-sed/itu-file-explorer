@@ -12,12 +12,15 @@ from PyQt5.QtWidgets import (QMainWindow, QApplication, QDesktopWidget,
                              QLineEdit, QLabel, QFontDialog, QTableWidget,
                              QTableWidgetItem, QComboBox, QAction,
                              QFormLayout, QGroupBox, QAbstractItemView,
-                             QSpinBox, QInputDialog, QMessageBox)
+                             QSpinBox, QInputDialog, QMessageBox, QSpacerItem)
 from PyQt5.QtCore import Qt
 from PyQt5 import QtGui
-from PyQt5.QtGui import QIcon, QStandardItemModel
+from PyQt5.QtGui import QIcon, QStandardItemModel, QFont
 import sys
 from datetime import datetime
+import re
+import json
+
 
 class ExplorerModel(QtGui.QStandardItemModel):
 
@@ -36,11 +39,16 @@ class ExplorerModel(QtGui.QStandardItemModel):
             source_item = QtGui.QStandardItemModel()
             source_item.dropMimeData(data, QtCore.Qt.CopyAction, 0, 0, QtCore.QModelIndex())
 
-            item_name = source_item.item(0, 0).text()  # TODO move/copy
-            print(self.parent.parent.fm.active.get_name(), item_name)
-            #self.parent.move_item(item_name, )
+            if MainWindow.ACTIVE_EXPLORER.fm.active.get_path() == self.parent.parent.fm.active.get_path():
+                return False
+
+            if self.parent.parent.parent.alt_pressed:
+                self.parent.parent.parent.move_to(self.parent.parent.fm)
+            else:
+                self.parent.parent.parent.copy_to(self.parent.parent.fm)
 
         return super().dropMimeData(data, action, row, 0, parent)
+
 
 class ExplorerStyle(QtWidgets.QProxyStyle):
     # Inspired by http://apocalyptech.com/linux/qt/qtableview/
@@ -84,6 +92,8 @@ class ExplorerTableView(QtWidgets.QTableView):
         self.model = ExplorerModel(self)
         self.model.setHorizontalHeaderLabels(MainWindow.NAMES[self.language]["files_header"])
         self.setModel(self.model)
+        selectionModel = self.selectionModel()
+        selectionModel.selectionChanged.connect(self.parent.parent.update_explorer_focus)
 
     def update(self, files, dont_hide=False):
         self.model.removeRows(0, self.model.rowCount())
@@ -103,7 +113,8 @@ class ExplorerTableView(QtWidgets.QTableView):
             name.setDropEnabled(False)
 
             if not i.is_folder():
-                size = QtGui.QStandardItem(str(round(i.get_size("KB"), 1)) + " kB")
+                s, met = i.get_size(metric_auto=True)
+                size = QtGui.QStandardItem(str(round(s, 1)) + " " + met)
                 changed = QtGui.QStandardItem(datetime.utcfromtimestamp(i.get_modification_time()).strftime('%d/%m/%Y %H:%M:%S'))
             else:
                 size = QtGui.QStandardItem("")
@@ -137,6 +148,7 @@ class ExplorerTableView(QtWidgets.QTableView):
 
     def was_clicked(self, index):
         MainWindow.ACTIVE_EXPLORER = self.parent
+        self.parent.parent.update_explorer_focus()
 
     def get_selected(self):
         indexes = self.selectedIndexes()
@@ -147,7 +159,11 @@ class ExplorerTableView(QtWidgets.QTableView):
                 continue
             if row not in selected:
                 selected.append(row)
-        return [self.parent.displayed[i] for i in selected]
+        rsec = []
+        for i in selected:
+            if i < len(self.parent.displayed):
+                rsec.append(self.parent.displayed[i])
+        return rsec
 
 
 class ComboBox(QtWidgets.QComboBox):
@@ -174,12 +190,14 @@ class FileExplorerWidget(QSplitter):
     SORT_SIZE = 1
     SORT_CHANGED = 2
 
-    def __init__(self, fm, language):
+    def __init__(self, fm, language, parent):
         super(FileExplorerWidget, self).__init__(Qt.Vertical)
         self.language = language
+        self.parent = parent
         self.sort_by = FileExplorerWidget.SORT_NAME
         self.sort_desc = False
         self.fm = fm
+        self.curr_disk = 0
         self.reinit()
 
     def reinit(self):
@@ -197,6 +215,7 @@ class FileExplorerWidget(QSplitter):
         self.topf.setMinimumHeight(FileExplorerWidget.FILES_WINDOW_TOP_FRAME_HEIGHT)
         # Disk selection
         self.disks = ComboBox(self.topf, self)
+        self.disks.activated.connect(self.switch_disk)
 
         # Search field
         self.search = QLineEdit(self.topf)
@@ -220,25 +239,50 @@ class FileExplorerWidget(QSplitter):
         self.addWidget(self.cmd_out)
         self.addWidget(self.cmd_in)
 
+        self.search.textChanged.connect(self.update)
+
         self.update()
 
     def update(self):
         # Update search field text
-        self.search.setPlaceholderText(MainWindow.NAMES[self.language]["search"])
+        self.search.setPlaceholderText(MainWindow.NAMES[self.language]["search"]+" "+self.fm.active.get_path())
         # Update path in terminal
         self.cmd_in.setPlaceholderText(self.fm.get_prefix())
         # Add disks
         self.disks.clear()
-        self.disks.addItems([i.get_name() for i in self.fm.get_disks()])
+        all_disks = [i.get_name() for i in self.fm.get_disks()]
+        self.disks.addItems(all_disks)
+        if self.fm.disk.get_name() in all_disks:
+            self.disks.setCurrentIndex(all_disks.index(self.fm.disk.get_name()))
+        else:
+            self.switch_disk(0)
         # Add files
         self.displayed = self.fm.active.get_content()
+        self.displayed = self.filter_displayed(self.displayed)
         if self.sort_by == FileExplorerWidget.SORT_NAME:
-            self.displayed.sort(key=lambda x: x.get_name(), reverse=self.sort_desc)
+            self.displayed.sort(key=lambda x: x.get_name().lower(), reverse=self.sort_desc)
+            print([i.get_name() for i in self.displayed])
         elif self.sort_by == FileExplorerWidget.SORT_SIZE:
-            self.displayed.sort(key=lambda x: x.get_size() if x.is_file() else 0, reverse=self.sort_desc)
+            self.displayed.sort(key=lambda x: x.get_size() if x.is_file() else -1, reverse=self.sort_desc)
         else:
-            self.displayed.sort(key=lambda x: x.get_modification_time() if x.is_file() else 0, reverse=self.sort_desc)
+            self.displayed.sort(key=lambda x: x.get_modification_time() if x.is_file() else -1, reverse=self.sort_desc)
         self.files.update(self.displayed)
+
+    def filter_displayed(self, disp):
+        search = self.search.text()
+        search = search.replace(".", "\\.")
+        search = search.replace("*", ".*")
+        filt = []
+        try:
+            reg = re.compile(search)
+        except Exception:
+            return disp
+
+        for i in disp:
+            if reg.match(i.get_name()):
+                filt.append(i)
+
+        return filt
 
     def cmd_in_entered(self):
         formatted_out = "\n"+self.fm.get_prefix()+" "+self.cmd_in.text()+"\n"
@@ -252,6 +296,13 @@ class FileExplorerWidget(QSplitter):
         self.cmd_out.moveCursor(QtGui.QTextCursor.End)
         self.cmd_in.setText("")
 
+    def switch_disk(self, i):
+        d = self.fm.get_disks()[i]
+        if self.fm.disk.get_name() != d.get_name():
+            self.fm.set_active(d.get_folder())
+            self.fm.disk = d
+            self.update()
+
 
 class MainWindow(QMainWindow):
 
@@ -260,17 +311,24 @@ class MainWindow(QMainWindow):
             "language_name": "Česky",
             "title": "ITU Prohlížeč souborů",
             "files_header": ["Název", "Velikost", "Datum úpravy"],
-            "search": "Hledat",
+            "search": "Hledat v",
             "new_folder": "Nová složka",
             "new_file": "Nový soubor",
-            "action_filter": "Podmíněné vykonání",
+            "action_filter": "Podmíněné vykonání (např. sh test $! == OK)",
             "b_mkdir_mo": "Vytvořit novou složku",
             "b_mkdir_d": "Jméno složky",
             "b_touch_mo": "Vytvořit prázný soubor",
             "b_touch_d": "Jméno souboru",
             "b_delete_mo": "Smazat",
+            "b_rename_mo": "Přejmenovat",
+            "b_rename_d": "Nové jméno pro ",
+            "b_move_right_mo": "Přesunout do složky napravo",
+            "b_move_left_mo": "Přesunout do složky nalevo",
+            "b_copy_right_mo": "Nakopírovat do složky napravo",
+            "b_copy_left_mo": "Nakopírovat do složky nalevo",
+            "b_copy_title": "Kopírování",
             "b_delete_file_confirm": "Opravdu chcete smazat soubor: ",
-            "b_delete_folder_confirm": "Opravdu chcete smazat všechen obsah a složku: ",
+            "b_delete_folder_confirm": "Opravdu chcete smazat složku a všechen její obsah: ",
             "b_delete_multiple_confirm": "Opravdu chcete smazat všechny tyto položky: ",
             "mb_settings": "Nastavení",
             "mb_set_windows": "Pracovní okna",
@@ -291,9 +349,12 @@ class MainWindow(QMainWindow):
             "as_icon_size": "Velikost tlačítek",
             "as_normal": "Normální",
             "as_bigger": "Vetší",
+            "as_default_path": "Výchozí cesta",
             "mb_advanced": "Pokročilé nastavení",
             "e_file_exists": "Soubor s tímto jménem již existuje",
             "e_folder_exists": "Složka s tímto jménem již existuje",
+            "e_action_filter": "Nesprávný syntax action filteru",
+            "e_action_filter_det": "Povolené operátory jsou == a != a musí být odděleny mezerami",
             "e_other": "Při operaci nastala chyba",
             "error": "Chyba",
             "close": "Zavřít",
@@ -304,10 +365,12 @@ class MainWindow(QMainWindow):
         "en": {
             "language_name": "English",
             "title": "ITU File explorer",
+
         },
         "fr": {
             "language_name": "Français",
             "title": "Explorateur de Fichiers",
+
         }
     }
 
@@ -315,6 +378,9 @@ class MainWindow(QMainWindow):
     EXPLORER_AMOUNT = 2
     MAX_EXPLORER_AMOUNT = 5
     ACTIVE_EXPLORER = None
+    STARTING_PATH = "/"
+    DEFAULT_PATH = STARTING_PATH
+    CONFIG_PATH = "./.itu_conf.json"
 
     def __init__(self, width, height, language="cz"):
         super(MainWindow, self).__init__()
@@ -329,12 +395,12 @@ class MainWindow(QMainWindow):
         self.dark_palette.setColor(QtGui.QPalette.WindowText, QtCore.Qt.white)
         self.dark_palette.setColor(QtGui.QPalette.Base, QtGui.QColor(15, 15, 15))
         self.dark_palette.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(53, 53, 53))
-        self.dark_palette.setColor(QtGui.QPalette.ToolTipBase, QtCore.Qt.white)
+        self.dark_palette.setColor(QtGui.QPalette.ToolTipBase, QtCore.Qt.black)
         self.dark_palette.setColor(QtGui.QPalette.ToolTipText, QtCore.Qt.white)
         self.dark_palette.setColor(QtGui.QPalette.Text, QtCore.Qt.white)
         self.dark_palette.setColor(QtGui.QPalette.Button, QtGui.QColor(53, 53, 53))
         self.dark_palette.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.white)
-        self.dark_palette.setColor(QtGui.QPalette.BrightText, QtCore.Qt.red)
+        self.dark_palette.setColor(QtGui.QPalette.BrightText, QtCore.Qt.green)
         self.dark_palette.setColor(QtGui.QPalette.Highlight, QtGui.QColor(142, 45, 197).lighter())
         self.dark_palette.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
 
@@ -344,17 +410,53 @@ class MainWindow(QMainWindow):
         self.confirm.setIcon(QMessageBox.Question)
         self.confirm.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
 
-        self.fms = [itubackend.FileManager() for _ in range(MainWindow.EXPLORER_AMOUNT)]
-
         self.bigger_icons = False
         self.theme = MainWindow.NAMES["cz"]["as_theme_light"]
-        self.settings_window = SettingsWindow(self)
+
+        self.conf = {}
+        try:
+            with open(MainWindow.CONFIG_PATH, "r", encoding="utf-8") as fconf:
+                confs = fconf.read()
+            self.conf = json.loads(confs)
+            if "language" in self.conf:
+                self.language = self.conf["language"]
+            if "theme" in self.conf:
+                if self.conf["theme"] == "dark":
+                    self.theme = MainWindow.NAMES["cz"]["as_theme_dark"]
+                    app.setPalette(self.dark_palette)
+            if "big_icons" in self.conf:
+                self.bigger_icons = self.conf["big_icons"]
+            if "style" in self.conf:
+                app.setStyle(self.conf["style"])
+            if "default_path" in self.conf:
+                MainWindow.DEFAULT_PATH = self.conf["default_path"]
+            if "explorer_amount" in self.conf:
+                MainWindow.EXPLORER_AMOUNT = self.conf["explorer_amount"]
+            if "font" in self.conf:
+                if "family" in self.conf["font"]:
+                    fnt = QFont(self.conf["font"]["family"])
+                    if "bold" in self.conf["font"]:
+                        fnt.setBold(self.conf["font"]["bold"])
+                    if "italic" in self.conf["font"]:
+                        fnt.setItalic(self.conf["font"]["italic"])
+                    if "size" in self.conf["font"]:
+                        fnt.setPointSize(self.conf["font"]["size"])
+                    self.setFont(fnt)
+        except Exception as e:
+            print("Could not load config or problem parsing - "+str(e))
+
+        self.fms = [itubackend.FileManager(MainWindow.DEFAULT_PATH) for _ in range(MainWindow.EXPLORER_AMOUNT)]
+
+        self.action_filter = None
 
         # Center the screen
         screen = QApplication.desktop().screenNumber(QApplication.desktop().cursor().pos())
         center = QApplication.desktop().screenGeometry(screen).center()
         self.move(center.x() - self.width() / 2, center.y() - self.height() / 2)
+
+        self.alt_pressed = False
         self.initUI()
+        self.settings_window = SettingsWindow(self)
 
     def initUI(self):
         self.setWindowTitle(MainWindow.NAMES[self.language]["title"])
@@ -371,6 +473,12 @@ class MainWindow(QMainWindow):
         no = self.confirm.button(QMessageBox.No)
         yes.setText(MainWindow.NAMES[self.language]["yes"])
         no.setText(MainWindow.NAMES[self.language]["no"])
+
+        self.confirm.setInformativeText("")
+        self.confirm.setText("")
+
+        self.error.setInformativeText("")
+        self.error.setText("")
 
         self.main_widget = QWidget(self)
 
@@ -409,7 +517,6 @@ class MainWindow(QMainWindow):
         self.mb_exit.triggered.connect(lambda: app.exit())
 
         # Language menu
-        """
         self.mb_language = self.menu_bar.addMenu(MainWindow.NAMES[self.language]["mb_language"])
         self.mb_lan_cz = QAction(MainWindow.NAMES["cz"]["language_name"])
         self.mb_lan_en = QAction(MainWindow.NAMES["en"]["language_name"])
@@ -417,7 +524,9 @@ class MainWindow(QMainWindow):
         self.mb_language.addAction(self.mb_lan_cz)
         self.mb_language.addAction(self.mb_lan_en)
         self.mb_language.addAction(self.mb_lan_fr)
-        """
+        self.mb_lan_cz.triggered.connect(lambda: self.change_language("cz"))
+        self.mb_lan_en.triggered.connect(lambda: self.change_language("en"))
+        self.mb_lan_fr.triggered.connect(lambda: self.change_language("fr"))
 
         # Making the space above left and right window
         self.top_frame = QFrame(self)
@@ -451,7 +560,21 @@ class MainWindow(QMainWindow):
             self.b_delete.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.b_delete.pressed.connect(self.rm)
 
-        self.action_filter = QLineEdit(self.top_frame)
+        self.b_rename = QPushButton(self.top_frame)
+        self.b_rename.setIcon(QIcon('./icons/rename.svg'))
+        self.b_rename.setToolTip(MainWindow.NAMES[self.language]["b_rename_mo"])
+        if self.bigger_icons:
+            self.b_rename.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.b_rename.pressed.connect(self.rename)
+
+        self.spacer1 = QSpacerItem(15, self.b_rename.size().height(), QSizePolicy.Expanding)
+
+        self.b_move_left = QPushButton(self.top_frame)
+        self.b_move_right = QPushButton(self.top_frame)
+        self.update_buttons()
+
+        if self.action_filter is None:
+            self.action_filter = QLineEdit(self.top_frame)
         self.action_filter.setPlaceholderText(MainWindow.NAMES[self.language]["action_filter"])
         self.action_filter.setMinimumWidth(300)
 
@@ -464,12 +587,16 @@ class MainWindow(QMainWindow):
         self.top_button_frame_layout.addWidget(self.b_mkdir)
         self.top_button_frame_layout.addWidget(self.b_touch)
         self.top_button_frame_layout.addWidget(self.b_delete)
+        self.top_button_frame_layout.addWidget(self.b_rename)
+        self.top_button_frame_layout.addSpacerItem(self.spacer1)
+        self.top_button_frame_layout.addWidget(self.b_move_left)
+        self.top_button_frame_layout.addWidget(self.b_move_right)
 
         self.top_frame_layout.addWidget(self.top_button_frame, alignment=QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
         self.top_frame_layout.addWidget(self.action_filter, alignment=QtCore.Qt.AlignRight | QtCore.Qt.AlignTop)
 
         # Creating explorer windows
-        self.explorers = [FileExplorerWidget(self.fms[i], self.language) for i in range(MainWindow.EXPLORER_AMOUNT)]
+        self.explorers = [FileExplorerWidget(self.fms[i], self.language, self) for i in range(MainWindow.EXPLORER_AMOUNT)]
         #self.explorers = [FileExplorerWidget(itubackend.FileManager("/home/marek"), self.language), FileExplorerWidget(itubackend.FileManager("/home"), self.language)]
         MainWindow.ACTIVE_EXPLORER = self.explorers[0]
 
@@ -488,12 +615,72 @@ class MainWindow(QMainWindow):
         # Add splitter under
         self.layout.addWidget(self.splitter)
 
+        self.update_explorer_focus()
+
         self.show()
+
+    def keyPressEvent(self, event):
+        if type(event) == QtGui.QKeyEvent:
+            if event.key() == Qt.Key_Alt:
+                self.alt_pressed = True
+                self.update_buttons()
+        else:
+            event.ignore()
+
+    def keyReleaseEvent(self, event):
+        if type(event) == QtGui.QKeyEvent:
+            if event.key() == Qt.Key_Alt:
+                self.alt_pressed = False
+                self.update_buttons()
+        else:
+            event.ignore()
+
+    def update_buttons(self):
+        if self.alt_pressed:
+            self.b_move_left.setIcon(QIcon('./icons/move_left.svg'))
+            self.b_move_left.setToolTip(MainWindow.NAMES[self.language]["b_move_left_mo"])
+            if self.bigger_icons:
+                self.b_move_left.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self.b_move_left.pressed.connect(lambda: self.move_to(True))
+
+            self.b_move_right.setIcon(QIcon('./icons/move_right.svg'))
+            self.b_move_right.setToolTip(MainWindow.NAMES[self.language]["b_move_right_mo"])
+            if self.bigger_icons:
+                self.b_move_right.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self.b_move_right.pressed.connect(lambda: self.move_to(False))
+        else:
+            self.b_move_left.setIcon(QIcon('./icons/copy_left.svg'))
+            self.b_move_left.setToolTip(MainWindow.NAMES[self.language]["b_copy_left_mo"])
+            if self.bigger_icons:
+                self.b_move_left.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self.b_move_left.pressed.connect(lambda: self.copy_to(True))
+
+            self.b_move_right.setIcon(QIcon('./icons/copy_right.svg'))
+            self.b_move_right.setToolTip(MainWindow.NAMES[self.language]["b_copy_right_mo"])
+            if self.bigger_icons:
+                self.b_move_right.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self.b_move_right.pressed.connect(lambda: self.copy_to(False))
+
+    def update_explorer_focus(self):
+        # Setting active window border
+        for i in self.explorers:
+            if i != MainWindow.ACTIVE_EXPLORER:
+                i.files.clearSelection()
+
+        if self.explorers.index(MainWindow.ACTIVE_EXPLORER) == 0 or len(MainWindow.ACTIVE_EXPLORER.files.get_selected()) == 0:
+            self.b_move_left.setEnabled(False)
+        else:
+            self.b_move_left.setEnabled(True)
+
+        if self.explorers.index(MainWindow.ACTIVE_EXPLORER) == self.EXPLORER_AMOUNT-1 or len(MainWindow.ACTIVE_EXPLORER.files.get_selected()) == 0:
+            self.b_move_right.setEnabled(False)
+        else:
+            self.b_move_right.setEnabled(True)
 
     def add_explorer(self):
         if MainWindow.EXPLORER_AMOUNT < MainWindow.MAX_EXPLORER_AMOUNT:
             MainWindow.EXPLORER_AMOUNT += 1
-            self.fms.append(itubackend.FileManager())
+            self.fms.append(itubackend.FileManager(MainWindow.DEFAULT_PATH))
             self.initUI()
 
     def remove_explorer(self):
@@ -506,10 +693,16 @@ class MainWindow(QMainWindow):
     def dark_mode(self):
         self.theme = MainWindow.NAMES["cz"]["as_theme_dark"]
         app.setPalette(self.dark_palette)
+        self.update_explorer_focus()
 
     def light_mode(self):
         self.theme = MainWindow.NAMES["cz"]["as_theme_light"]
         app.setPalette(self.light_palette)
+        self.update_explorer_focus()
+
+    def change_language(self, language):
+        self.language = language
+        self.initUI()
 
     def mkdir(self):
         if MainWindow.ACTIVE_EXPLORER is not None:
@@ -521,9 +714,11 @@ class MainWindow(QMainWindow):
                     MainWindow.ACTIVE_EXPLORER.fm.active.create_folder(name)
                 except FileExistsError as e:
                     self.error.setText(MainWindow.NAMES[self.language]["e_folder_exists"])
+                    self.error.setInformativeText("")
                     self.error.exec()
                 except Exception:
                     self.error.setText(MainWindow.NAMES[self.language]["e_other"])
+                    self.error.setInformativeText("")
                     self.error.exec()
                 self.initUI()
 
@@ -537,19 +732,34 @@ class MainWindow(QMainWindow):
                     MainWindow.ACTIVE_EXPLORER.fm.active.create_file(name)
                 except FileExistsError as e:
                     self.error.setText(MainWindow.NAMES[self.language]["e_file_exists"])
+                    self.error.setInformativeText("")
                     self.error.exec()
                 except Exception:
                     self.error.setText(MainWindow.NAMES[self.language]["e_other"])
+                    self.error.setInformativeText("")
                     self.error.exec()
                 self.initUI()
 
     def rm(self):
         if MainWindow.ACTIVE_EXPLORER is not None:
             selected = MainWindow.ACTIVE_EXPLORER.files.get_selected()
+            af_cond = self.action_filter.text()
+            if len(af_cond) > 0:
+                for i, e in enumerate(selected):
+                    try:
+                        if not itubackend.check_action_filter(af_cond, MainWindow.ACTIVE_EXPLORER.fm.active.get_path(),
+                                                              e.get_name()):
+                            del selected[i]
+                    except itubackend.IncorrectActionFilterException:
+                        self.error.setText(MainWindow.NAMES[self.language]["e_action_filter"])
+                        self.error.setInformativeText(MainWindow.NAMES[self.language]["e_action_filter_det"])
+                        self.error.exec()
+                        return
+
             if len(selected) > 1:
-                all = ", ".join([a.get_name() for a in selected])
+                match = [a.get_name() for a in selected]
                 self.confirm.setText(MainWindow.NAMES[self.language]["b_delete_multiple_confirm"])
-                self.confirm.setInformativeText(all)
+                self.confirm.setInformativeText(", ".join(match))
             elif selected[0].is_file():
                 self.confirm.setText(MainWindow.NAMES[self.language]["b_delete_file_confirm"])
                 self.confirm.setInformativeText(selected[0].get_name())
@@ -570,6 +780,95 @@ class MainWindow(QMainWindow):
                     self.error.exec()
                 self.initUI()
 
+    def rename(self):
+        if MainWindow.ACTIVE_EXPLORER is not None:
+            selected = MainWindow.ACTIVE_EXPLORER.files.get_selected()
+            af_cond = self.action_filter.text()
+            for i in selected:
+                if len(af_cond) > 0:
+                    try:
+                        if not itubackend.check_action_filter(af_cond, MainWindow.ACTIVE_EXPLORER.fm.active.get_path(),
+                                                              i.get_name()):
+                            continue
+                    except itubackend.IncorrectActionFilterException:
+                        self.error.setText(MainWindow.NAMES[self.language]["e_action_filter"])
+                        self.error.setInformativeText(MainWindow.NAMES[self.language]["e_action_filter_det"])
+                        self.error.exec()
+                        return
+
+                name, ok = QInputDialog().getText(self, MainWindow.NAMES[self.language]["b_rename_mo"],
+                                                  MainWindow.NAMES[self.language]["b_rename_d"] + i.get_name(), QLineEdit.Normal,
+                                                  i.get_name())
+                if ok:
+                    try:
+                        i.rename(name)
+                    except Exception:
+                        self.error.setText(MainWindow.NAMES[self.language]["e_other"])
+                        self.error.setInformativeText("")
+                        self.error.exec()
+                    self.initUI()
+                else:
+                    break
+        self.initUI()
+
+    def copy_to(self, left=True, to_fm=None):
+        if to_fm is None:
+            win_to = self.explorers[self.explorers.index(MainWindow.ACTIVE_EXPLORER) + (-1 if left else 1)]
+        if MainWindow.ACTIVE_EXPLORER is not None:
+            selected = MainWindow.ACTIVE_EXPLORER.files.get_selected()
+            af_cond = self.action_filter.text()
+            for i in selected:
+                if len(af_cond) > 0:
+                    try:
+                        if not itubackend.check_action_filter(af_cond, MainWindow.ACTIVE_EXPLORER.fm.active.get_path(),
+                                                              i.get_name()):
+                            continue
+                    except itubackend.IncorrectActionFilterException:
+                        self.error.setText(MainWindow.NAMES[self.language]["e_action_filter"])
+                        self.error.setInformativeText(MainWindow.NAMES[self.language]["e_action_filter_det"])
+                        self.error.exec()
+                        return
+                try:
+                    if to_fm is None:
+                        i.copy(win_to.fm.active, True)
+                    else:
+                        i.copy(to_fm.active, True)
+                except Exception:
+                    self.error.setText(MainWindow.NAMES[self.language]["e_other"])
+                    self.error.setInformativeText("")
+                    self.error.exec()
+                self.initUI()
+        self.initUI()
+
+    def move_to(self, left=True, to_fm=None):
+        if to_fm is None:
+            win_to = self.explorers[self.explorers.index(MainWindow.ACTIVE_EXPLORER) + (-1 if left else 1)]
+        if MainWindow.ACTIVE_EXPLORER is not None:
+            selected = MainWindow.ACTIVE_EXPLORER.files.get_selected()
+            af_cond = self.action_filter.text()
+            for i in selected:
+                if len(af_cond) > 0:
+                    try:
+                        if not itubackend.check_action_filter(af_cond, MainWindow.ACTIVE_EXPLORER.fm.active.get_path(),
+                                                              i.get_name()):
+                            continue
+                    except itubackend.IncorrectActionFilterException:
+                        self.error.setText(MainWindow.NAMES[self.language]["e_action_filter"])
+                        self.error.setInformativeText(MainWindow.NAMES[self.language]["e_action_filter_det"])
+                        self.error.exec()
+                        return
+                try:
+                    if to_fm is None:
+                        i.move(win_to.fm.active, True)
+                    else:
+                        i.move(to_fm.active, True)
+                except Exception:
+                    self.error.setText(MainWindow.NAMES[self.language]["e_other"])
+                    self.error.setInformativeText("")
+                    self.error.exec()
+                self.initUI()
+        self.initUI()
+
 
 class SettingsWindow(QMainWindow):
 
@@ -588,6 +887,7 @@ class SettingsWindow(QMainWindow):
         screen = QApplication.desktop().screenNumber(QApplication.desktop().cursor().pos())
         center = QApplication.desktop().screenGeometry(screen).center()
         self.move(center.x() - self.width() / 2, center.y() - self.height() / 2)
+
         self.update()
 
     def initUI(self):
@@ -651,6 +951,11 @@ class SettingsWindow(QMainWindow):
         self.layout_form3.addRow(QLabel(MainWindow.NAMES[self.parent.language]["as_windows_amount"]),
                                  self.explorers)
 
+        self.default_path = QLineEdit()
+        self.default_path.setText(MainWindow.DEFAULT_PATH)
+        self.layout_form3.addRow(QLabel(MainWindow.NAMES[self.parent.language]["as_default_path"]),
+                                 self.default_path)
+
         self.group_explorers.setLayout(self.layout_form3)
         self.layout.addWidget(self.group_explorers)
 
@@ -665,7 +970,7 @@ class SettingsWindow(QMainWindow):
 
         self.b_cancel.pressed.connect(self.reset_settings)
         self.b_apply.pressed.connect(self.update)
-        self.b_ok.pressed.connect(self.hide)
+        self.b_ok.pressed.connect(lambda: (self.update(), self.hide(), self.save_config()))
 
         self.button_layout.addWidget(self.b_ok, alignment=QtCore.Qt.AlignRight)
         self.button_layout.addWidget(self.b_cancel, alignment=QtCore.Qt.AlignRight)
@@ -678,6 +983,13 @@ class SettingsWindow(QMainWindow):
         self.old_font = self.font()
         self.old_style = app.style().objectName()
         self.old_language = self.parent.language
+
+        f = itubackend.Folder(self.default_path.text())
+        try:
+            f.get_content()
+            MainWindow.DEFAULT_PATH = self.default_path.text()
+        except Exception:
+            self.default_path.setText(MainWindow.STARTING_PATH)
 
         if MainWindow.EXPLORER_AMOUNT < len(self.parent.fms):  # Remove old explorers
             self.parent.fms = self.parent.fms[:-(len(self.parent.fms)-MainWindow.EXPLORER_AMOUNT)]
@@ -706,10 +1018,32 @@ class SettingsWindow(QMainWindow):
         self.styles.setCurrentIndex(i)
         self.explorers.setValue(MainWindow.EXPLORER_AMOUNT)
 
+    def save_config(self):
+        config = {
+            "language": self.parent.language,
+            "theme": "dark" if self.theme == MainWindow.NAMES["cz"]["as_theme_dark"] else "light",
+            "style": app.style().objectName(),
+            "big_icons": self.parent.bigger_icons,
+            "default_path": MainWindow.DEFAULT_PATH,
+            "explorer_amount": MainWindow.EXPLORER_AMOUNT,
+            "font": {
+                "family": self.font().family(),
+                "bold": self.font().bold(),
+                "italic": self.font().italic(),
+                "size": self.font().pointSize()
+            }
+        }
+        try:
+            with open(MainWindow.CONFIG_PATH, "w", encoding="utf-8") as fconf:
+                fconf.write(json.dumps(config))
+        except Exception as e:
+            print("Could not save config - {}".format(str(e)), file=sys.stderr)
+
     def reset_settings(self):
         self.setFont(self.old_font)
         self.parent.setFont(self.old_font)
         app.setStyle(self.old_style)
+        self.default_path.setText(MainWindow.DEFAULT_PATH)
         if self.theme == MainWindow.NAMES["cz"]["as_theme_light"]:
             self.parent.light_mode()
         else:
@@ -738,7 +1072,7 @@ class SettingsWindow(QMainWindow):
     def explorer_amount_changed(self):
         if self.explorers.value() > MainWindow.EXPLORER_AMOUNT and len(self.parent.fms) < self.explorers.value():
             for _ in range(self.explorers.value()-len(self.parent.fms)):
-                self.parent.fms.append(itubackend.FileManager())
+                self.parent.fms.append(itubackend.FileManager(MainWindow.DEFAULT_PATH))
         MainWindow.EXPLORER_AMOUNT = self.explorers.value()
         self.parent.initUI()
 
